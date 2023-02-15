@@ -44,6 +44,9 @@ static NSString * const kEncodedBody     = @"encodedBody";
 static NSString * const kContentType     = @"contentType";
 static NSString * const kHttpContentType = @"content-type";
 static NSString * const kDoesNotRequireAuthentication = @"doesNotRequireAuthentication";
+static NSString * const KFileDownloadParams = @"fileDownloadParams";
+static NSString * const kFileDownloadParamsFileName = @"fileName";
+static NSString * const kFileDownloadParamsPath = @"path";
 
 
 @implementation SFNetReactBridge
@@ -64,7 +67,11 @@ RCT_EXPORT_METHOD(sendRequest:(NSDictionary *)argsDict callback:(RCTResponseSend
     //Set to true if boolean is absent.
     BOOL doesNotRequireAuthentication = [argsDict nonNullObjectForKey:kDoesNotRequireAuthentication] != nil && [[argsDict nonNullObjectForKey:kDoesNotRequireAuthentication] boolValue];
     BOOL returnBinary = [argsDict nonNullObjectForKey:kReturnBinary] != nil && [[argsDict nonNullObjectForKey:kReturnBinary] boolValue];
-    SFRestRequest* request = nil;
+    BOOL saveResponseToDisk = false;
+    if (returnBinary && [argsDict nonNullObjectForKey:KFileDownloadParams] != nil) {
+        saveResponseToDisk = true;
+    }
+    SFRestRequest *request = nil;
     
     // Sets HTTP body explicitly for a POST, PATCH or PUT request.
     if (method == SFRestMethodPOST || method == SFRestMethodPATCH || method == SFRestMethodPUT) {
@@ -101,41 +108,65 @@ RCT_EXPORT_METHOD(sendRequest:(NSDictionary *)argsDict callback:(RCTResponseSend
         request.parseResponse = NO;
     }
     SFRestAPI *restApiInstance = doesNotRequireAuthentication ? [SFRestAPI sharedGlobalInstance] : [SFRestAPI sharedInstance];
-
+    
     __weak typeof(self) weakSelf = self;
     [restApiInstance sendRequest:request
-                                      failureBlock:^(id response, NSError *e, NSURLResponse *rawResponse) {
-                                          __strong typeof(self) strongSelf = weakSelf;
-                                          NSMutableDictionary *responseDictionary = [[rawResponse asDictionary] mutableCopy];
-                                          responseDictionary[@"body"] = [strongSelf serializableResponse:response rawResponse:rawResponse];
-                                          NSMutableDictionary *errorDictionary = [NSMutableDictionary new];
-                                          errorDictionary[@"error"] = e.localizedDescription;
-                                          errorDictionary[@"response"] = responseDictionary;
-                                          callback(@[RCTMakeError(@"sendRequest failed", nil, errorDictionary)]);
-                                      }
-                                  successBlock:^(id response, NSURLResponse *rawResponse) {
-                                      id result;
-                                      
-                                      // Binary response
-                                      if (returnBinary) {
-                                          result = @{
-                                                     kEncodedBody:[((NSData*) response) base64EncodedStringWithOptions:0],
-                                                     kContentType:((NSHTTPURLResponse*) rawResponse).allHeaderFields[kHttpContentType]
-                                                     };
-                                      }
-                                      // Some response
-                                      else if (response) {
-                                          __strong typeof(self) strongSelf = weakSelf;
-                                          result = [strongSelf serializableResponse:response rawResponse:rawResponse];
-                                      }
-                                      // No response
-                                      else {
-                                          result = nil;
-                                      }
-
-                                      callback(@[[NSNull null], result == nil ? [NSNull null] : result]);
-                                  }
-     ];
+                    failureBlock:^(id response, NSError *e, NSURLResponse *rawResponse) {
+        __strong typeof(self) strongSelf = weakSelf;
+        NSMutableDictionary *responseDictionary = [[rawResponse asDictionary] mutableCopy];
+        responseDictionary[@"body"] = [strongSelf serializableResponse:response rawResponse:rawResponse];
+        NSMutableDictionary *errorDictionary = [NSMutableDictionary new];
+        errorDictionary[@"error"] = e.localizedDescription;
+        errorDictionary[@"response"] = responseDictionary;
+        callback(@[RCTMakeError(@"sendRequest failed", nil, errorDictionary)]);
+    }
+                    successBlock:^(id response, NSURLResponse *rawResponse) {
+        id result;
+        
+        // Binary response
+        if (returnBinary) {
+            if (saveResponseToDisk) {
+                NSError *err;
+                NSURL *fileUrl = nil;
+                NSDictionary *fileDownloadParam = [argsDict nonNullObjectForKey:KFileDownloadParams];
+                NSString *fileName = [fileDownloadParam nonNullObjectForKey:kFileDownloadParamsFileName];
+                NSString *path = [fileDownloadParam nonNullObjectForKey:kFileDownloadParamsPath];
+                if (path != nil) {
+                    fileUrl = [[NSURL fileURLWithPath:path] URLByAppendingPathComponent:fileName];
+                } else {
+                    fileUrl = [[[NSFileManager defaultManager] temporaryDirectory] URLByAppendingPathComponent:fileName];
+                }
+                BOOL success =  [(NSData *) response writeToURL:fileUrl options: NSDataWritingAtomic error:&err];
+                if (success) {
+                    result = @{
+                        kFileDownloadParamsPath:[fileUrl absoluteString],
+                        kContentType:((NSHTTPURLResponse*) rawResponse).allHeaderFields[kHttpContentType]
+                    };
+                } else {
+                    callback(@[RCTMakeError(@"Download failed", err, nil)]);
+                    return;
+                }
+                
+            } else {
+                result = @{
+                    kEncodedBody:[((NSData*) response) base64EncodedStringWithOptions:0],
+                    kContentType:((NSHTTPURLResponse*) rawResponse).allHeaderFields[kHttpContentType]
+                };
+            }
+        }
+        // Some response
+        else if (response) {
+            __strong typeof(self) strongSelf = weakSelf;
+            result = [strongSelf serializableResponse:response rawResponse:rawResponse];
+        }
+        // No response
+        else {
+            result = nil;
+        }
+        
+        callback(@[[NSNull null], result == nil ? [NSNull null] : result]);
+    }
+    ];
 }
 
 - (id)serializableResponse:(id)response rawResponse:(NSURLResponse *)rawResponse {

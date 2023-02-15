@@ -24,13 +24,20 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-import { NativeModules } from "react-native";
+import { NativeModules, DeviceEventEmitter} from "react-native";
 import { exec as forceExec, ExecErrorCallback, ExecSuccessCallback } from "./react.force.common";
 import { sdkConsole } from "./react.force.log";
 import { HttpMethod } from "./typings";
 const { SalesforceNetReactBridge, SFNetReactBridge } = NativeModules;
 
 var  apiVersion = 'v55.0';
+const statusCodes = {
+      TEMPORARY_REDIRECT: 307,
+      MOVED_PERMANENTLY: 301,
+};
+const errorCodes = {
+      INVALID_SESSION: 'INVALID_SESSION_ID',
+};
 
 /**
  * Set apiVersion to be used
@@ -58,6 +65,7 @@ export const sendRequest = <T>(
   fileParams?: unknown,
   returnBinary?: boolean,
   doesNotRequireAuthentication?: boolean,
+  fileDownloadParams?: unknown,
 ): void => {
   method = method || "GET";
   payload = payload || {};
@@ -74,6 +82,21 @@ export const sendRequest = <T>(
     fileParams,
     returnBinary,
     doesNotRequireAuthentication,
+    fileDownloadParams,
+  };
+  DeviceEventEmitter.emit("sendRequest");
+  const handleError = (error: any) => {
+    if (
+      error?.response?.statusCode === statusCodes.MOVED_PERMANENTLY ||
+      error?.response?.statusCode === statusCodes.TEMPORARY_REDIRECT ||
+      (Array.isArray(error?.response?.body) &&
+        error?.response?.body.some((i: any) => i?.errorCode === errorCodes.INVALID_SESSION))
+    ) {
+      DeviceEventEmitter.emit("sf_invalid_session");
+    }
+    if (errorCB) {
+      errorCB(error);
+    }
   };
   forceExec(
     "SFNetReactBridge",
@@ -81,7 +104,7 @@ export const sendRequest = <T>(
     SFNetReactBridge,
     SalesforceNetReactBridge,
     successCB,
-    errorCB,
+    handleError,
     "sendRequest",
     args,
   );
@@ -419,4 +442,21 @@ export const collectionDelete = <T>(
   successCB: ExecSuccessCallback<T>,
   errorCB: ExecErrorCallback,
 ): void => sendRequest("/services/data", `/${apiVersion}/composite/sobjects?allOrNone=${allOrNone}&ids=${ids.join(',')}`, successCB, errorCB, "DELETE");
+
+/**
+ * Convenience function to download a file at user specified location
+ * @param fileDownloadParams {contentDocumentId:string, contentVersion:stirng, fileName:stirng, path:stirng }
+ * @param callback function to which response will be passed (attachment is returned as {encodedBody:"base64-encoded-response", contentType:"content-type"})
+ * @param [error=null] function called in case of error
+ */
+export const downloadFileAtLocation = (fileDownloadParams: {contentDocumentId:string, contentVersion:string, fileName:string, path:string }, successCB : ()=> {encodedBody: string, contentType:string}, errorCB: ExecErrorCallback) => {
+    const method = "GET";
+    const payload = {};
+    const headerParams =  {};
+    const fileParams =  {}; 
+    const returnBinary = true;
+    const doesNotRequireAuthentication = false;
+    const args = {endPoint: null, path: null, method, queryParams:payload, headerParams, fileParams, returnBinary, doesNotRequireAuthentication, fileDownloadParams};
+    forceExec("SFNetReactBridge", "SalesforceNetReactBridge", SFNetReactBridge, SalesforceNetReactBridge, successCB, errorCB, "sendRequest", args);
+}
 

@@ -27,6 +27,7 @@
 #import <React/RCTUtils.h>
 #import <SalesforceSDKCore/SalesforceSDKManager.h>
 #import <SalesforceSDKCore/SFUserAccountManager.h>
+#import <MobileSync/MobileSyncSDKManager.h>
 NSString * const kAccessTokenCredentialsDictKey = @"accessToken";
 NSString * const kRefreshTokenCredentialsDictKey = @"refreshToken";
 NSString * const kClientIdCredentialsDictKey = @"clientId";
@@ -75,12 +76,22 @@ RCT_EXPORT_METHOD(authenticate:(NSDictionary *)args callback:(RCTResponseSenderB
     [SFSDKReactLogger d:[self class] format:@"authenticate: arguments: %@", args];
     dispatch_async(dispatch_get_main_queue(), ^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
-        [[SFUserAccountManager sharedInstance] loginWithCompletion:^(SFOAuthInfo *authInfo,SFUserAccount *userAccount) {
+        SFOAuthCredentials *creds = [SFUserAccountManager sharedInstance].currentUser.credentials;
+        SFUserAccountManagerSuccessCallbackBlock success = ^(SFOAuthInfo *authInfo,SFUserAccount *userAccount){
             [SFUserAccountManager sharedInstance].currentUser  =  userAccount;
+            [[MobileSyncSDKManager sharedManager] setupUserStoreFromDefaultConfig];
             [strongSelf sendAuthCredentials:callback];
-        } failure:^(SFOAuthInfo *authInfo, NSError *error) {
-            [strongSelf sendNotAuthenticatedError:callback];
-        }];
+        };
+        SFUserAccountManagerFailureCallbackBlock failure = ^(SFOAuthInfo *authInfo, NSError *error) {
+            [[SFUserAccountManager sharedInstance] loginWithCompletion:success failure:^(SFOAuthInfo *authInfo, NSError *error) {
+                [self sendNotAuthenticatedError:callback];
+            }];
+        };
+        if (creds != nil) {
+            [[SFUserAccountManager sharedInstance] refreshCredentials:creds completion:success failure:failure];
+        } else {
+            failure(nil, nil);
+        }
     });
 }
 
