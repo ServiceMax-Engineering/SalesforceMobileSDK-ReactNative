@@ -90,7 +90,7 @@ export const sendRequest = <T>(
       error?.response?.statusCode === statusCodes.MOVED_PERMANENTLY ||
       error?.response?.statusCode === statusCodes.TEMPORARY_REDIRECT ||
       (Array.isArray(error?.response?.body) &&
-        error?.response?.body.some((i) => i?.errorCode === errorCodes.INVALID_SESSION))
+        error?.response?.body.some((i: any) => i?.errorCode === errorCodes.INVALID_SESSION))
     ) {
       DeviceEventEmitter.emit("sf_invalid_session");
     }
@@ -449,7 +449,7 @@ export const collectionDelete = <T>(
  * @param callback function to which response will be passed (attachment is returned as {encodedBody:"base64-encoded-response", contentType:"content-type"})
  * @param [error=null] function called in case of error
  */
-export const downloadFileAtLocation = (fileDownloadParams, successCB, errorCB) => {
+export const downloadFileAtLocation = (fileDownloadParams: {contentDocumentId:string, contentVersion:string, fileName:string, path:string }, successCB : ()=> {encodedBody: string, contentType:string}, errorCB: ExecErrorCallback) => {
     const method = "GET";
     const payload = {};
     const headerParams =  {};
